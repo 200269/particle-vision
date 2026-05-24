@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实时交互 3D 粒子视觉系统</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: rgba(20, 20, 35, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #e8e8f0;
+      --accent: #a855f7;
+      --radius: 14px;
+      --glass: blur(16px);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: "Inter", "PingFang SC", system-ui, sans-serif;
+      background: var(--bg);
+      overflow: hidden;
+      height: 100vh;
+      width: 100vw;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    canvas#threeCanvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+    }
+
+    /* Camera Preview */
+    #cameraPreview {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      width: 200px;
+      height: 150px;
+      border-radius: var(--radius);
+      border: 2px solid var(--border);
+      overflow: hidden;
+      z-index: 10;
+      background: #000;
+      cursor: nwse-resize;
+      transition: box-shadow 0.3s;
+    }
+    #cameraPreview:hover { box-shadow: 0 0 24px rgba(168, 85, 247, 0.3); }
+    #cameraPreview video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    #cameraPreview .resize-handle {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 16px;
+      height: 16px;
+      background: var(--accent);
+      clip-path: polygon(100% 0, 100% 100%, 0 100%);
+      cursor: nwse-resize;
+    }
+
+    /* Hand Status */
+    #handStatus {
+      position: fixed;
+      bottom: 190px;
+      left: 24px;
+      z-index: 10;
+      font-size: 0.78rem;
+      color: var(--text);
+      background: var(--surface);
+      backdrop-filter: var(--glass);
+      padding: 8px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      opacity: 0.8;
+    }
+    #handStatus.active { color: #4ade80; border-color: #4ade80; }
+
+    /* Right Panel */
+    .panel {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      bottom: 24px;
+      width: 240px;
+      background: var(--surface);
+      backdrop-filter: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+    }
+    .panel h3 {
+      color: var(--accent);
+      font-size: 0.85rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      text-align: center;
+    }
+    .preset-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .preset-btn {
+      padding: 10px 8px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.78rem;
+      transition: all 0.25s;
+      white-space: nowrap;
+    }
+    .preset-btn:hover { border-color: var(--accent); background: rgba(168, 85, 247, 0.12); }
+    .preset-btn.active { background: rgba(168, 85, 247, 0.2); border-color: var(--accent); color: var(--accent); }
+
+    .control-group { display: flex; flex-direction: column; gap: 6px; }
+    .control-group label {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+    }
+    input[type="color"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      cursor: pointer;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.15);
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Fullscreen Button */
+    #fsBtn {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 10;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--surface);
+      backdrop-filter: var(--glass);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 1.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.25s;
+    }
+    #fsBtn:hover { border-color: var(--accent); background: rgba(168, 85, 247, 0.15); }
+
+    /* FPS */
+    #fpsCounter {
+      position: fixed;
+      top: 24px;
+      left: 24px;
+      z-index: 10;
+      font-size: 0.72rem;
+      color: rgba(255, 255, 255, 0.5);
+      font-family: monospace;
+    }
+
+    @media (max-width: 768px) {
+      .panel {
+        top: auto;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: auto;
+        max-height: 40vh;
+        border-radius: var(--radius) var(--radius) 0 0;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 10px;
+        padding: 14px;
+      }
+      .panel h3 { display: none; }
+      .preset-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+      .preset-btn { font-size: 0.7rem; padding: 8px 10px; }
+      #cameraPreview { width: 120px; height: 90px; bottom: 16px; left: 16px; }
+      #handStatus { bottom: 120px; }
+    }
+  </style>
+</head>
+<body>
+
+  <canvas id="threeCanvas"></canvas>
+
+  <div id="fpsCounter">FPS: --</div>
+
+  <div id="cameraPreview">
+    <video id="videoEl" autoplay playsinline></video>
+    <div class="resize-handle" id="resizeHandle"></div>
+  </div>
+  <div id="handStatus" class="">✋ 等待手势...</div>
+
+  <div class="panel" id="panel">
+    <h3>✦ 粒子宇宙</h3>
+    <div class="preset-grid">
+      <button class="preset-btn active" data-preset="nebula">🌌 星云</button>
+      <button class="preset-btn" data-preset="galaxy">🌀 星系</button>
+      <button class="preset-btn" data-preset="sphere">🔮 球体</button>
+      <button class="preset-btn" data-preset="torus">⭕ 环体</button>
+      <button class="preset-btn" data-preset="helix">🧬 螺旋</button>
+      <button class="preset-btn" data-preset="vortex">🌪 漩涡</button>
+      <button class="preset-btn" data-preset="cube">💠 立方</button>
+      <button class="preset-btn" data-preset="dna">🔗 DNA</button>
+    </div>
+    <div class="control-group">
+      <label>🎨 基础颜色</label>
+      <input type="color" id="colorPicker" value="#a855f7">
+    </div>
+    <div class="control-group">
+      <label>✨ 粒子密度</label>
+      <input type="range" id="densitySlider" min="2000" max="30000" value="8000" step="500">
+      <span style="font-size:0.7rem;color:rgba(255,255,255,0.4)" id="densityVal">8000</span>
+    </div>
+  </div>
+
+  <button id="fsBtn" title="全屏">⛶</button>
+
+  <!-- Three.js Import Map -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/+esm"
+    }
+  }
+  </script>
+
+  <script type="module">
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+  // ============ DOM Elements ============
+  const canvas = document.getElementById('threeCanvas');
+  const videoEl = document.getElementById('videoEl');
+  const handStatus = document.getElementById('handStatus');
+  const fpsCounter = document.getElementById('fpsCounter');
+  const fsBtn = document.getElementById('fsBtn');
+  const colorPicker = document.getElementById('colorPicker');
+  const densitySlider = document.getElementById('densitySlider');
+  const densityVal = document.getElementById('densityVal');
+  const previewBox = document.getElementById('cameraPreview');
+
+  // ============ Three.js Setup ============
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+  camera.position.z = 12;
+
+  // Post-processing with bloom
+  const composer = new EffectComposer(renderer);
+  const renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
+  const bloomPass = new UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.8, 0.4, 0.85
+  );
+  bloomPass.threshold = 0.1;
+  bloomPass.strength = 1.2;
+  bloomPass.radius = 0.5;
+  composer.addPass(bloomPass);
+
+  // ============ Background Stars ============
+  const bgStarsGeo = new THREE.BufferGeometry();
+  const bgStarsCount = 4000;
+  const bgStarsPos = new Float32Array(bgStarsCount * 3);
+  const bgStarsCol = new Float32Array(bgStarsCount * 3);
+  const bgStarsSiz = new Float32Array(bgStarsCount);
+
+  for (let i = 0; i < bgStarsCount; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const dist = 30 + Math.random() * 80;
+    bgStarsPos[i * 3] = dist * Math.sin(phi) * Math.cos(theta);
+    bgStarsPos[i * 3 + 1] = dist * Math.sin(phi) * Math.sin(theta);
+    bgStarsPos[i * 3 + 2] = dist * Math.cos(phi);
+
+    const hue = Math.random();
+    const col = new THREE.Color().setHSL(hue, 0.8, 0.5 + Math.random() * 0.4);
+    bgStarsCol[i * 3] = col.r;
+    bgStarsCol[i * 3 + 1] = col.g;
+    bgStarsCol[i * 3 + 2] = col.b;
+    bgStarsSiz[i] = Math.random() * 0.06 + 0.01;
+  }
+  bgStarsGeo.setAttribute('position', new THREE.BufferAttribute(bgStarsPos, 3));
+  bgStarsGeo.setAttribute('color', new THREE.BufferAttribute(bgStarsCol, 3));
+  bgStarsGeo.setAttribute('size', new THREE.BufferAttribute(bgStarsSiz, 1));
+
+  const glowTex = createGlowTexture();
+  const bgStarsMat = new THREE.PointsMaterial({
+    size: 0.12,
+    map: glowTex,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.7,
+  });
+  const bgStars = new THREE.Points(bgStarsGeo, bgStarsMat);
+  scene.add(bgStars);
+
+  // ============ Main Particle System ============
+  let particleCount = 8000;
+  let mainParticles;
+  let currentPreset = 'nebula';
+  let baseColor = new THREE.Color('#a855f7');
+  let targetSpread = 1.0;
+  let currentSpread = 1.0;
+  let targetRotationY = 0;
+  let targetRotationX = 0;
+  let currentRotationY = 0;
+  let currentRotationX = 0;
+  let rotationSpeedX = 0.3;
+  let rotationSpeedY = 0.2;
+  let colorPhase = 0;
+
+  function createGlowTexture() {
+    const size = 128;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d');
+    const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.08, 'rgba(255,255,255,0.9)');
+    gradient.addColorStop(0.2, 'rgba(255,200,255,0.6)');
+    gradient.addColorStop(0.4, 'rgba(180,120,255,0.2)');
+    gradient.addColorStop(0.7, 'rgba(60,20,120,0.03)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(c);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function generatePresetPositions(preset, count) {
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+
+    switch (preset) {
+      case 'nebula':
+        for (let i = 0; i < count; i++) {
+          const r = Math.pow(Math.random(), 0.5) * 5;
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          // Add some filament structure
+          const filament = Math.sin(theta * 5 + phi * 3) * 0.3;
+          const rr = r * (1 + filament);
+          positions[i * 3] = rr * Math.sin(phi) * Math.cos(theta);
+          positions[i * 3 + 1] = rr * Math.sin(phi) * Math.sin(theta) * 0.6;
+          positions[i * 3 + 2] = rr * Math.cos(phi);
+
+          const hue = (0.7 + Math.random() * 0.3 + Math.sin(theta * 2) * 0.1) % 1;
+          colors[i * 3] = 1;
+          colors[i * 3 + 1] = 1;
+          colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.06 + 0.02;
+        }
+        break;
+
+      case 'galaxy':
+        for (let i = 0; i < count; i++) {
+          const arm = Math.floor(Math.random() * 4);
+          const armAngle = (arm / 4) * Math.PI * 2;
+          const dist = Math.pow(Math.random(), 0.4) * 5;
+          const spiralAngle = dist * 1.5 + armAngle;
+          const spread = (1 - dist / 5) * 0.6 + 0.05;
+          const scatter = (Math.random() - 0.5) * spread * 2;
+
+          positions[i * 3] = Math.cos(spiralAngle) * dist + (Math.random() - 0.5) * spread;
+          positions[i * 3 + 1] = scatter;
+          positions[i * 3 + 2] = Math.sin(spiralAngle) * dist + (Math.random() - 0.5) * spread;
+
+          colors[i * 3] = 1;
+          colors[i * 3 + 1] = 1;
+          colors[i * 3 + 2] = 1;
+          sizes[i] = (1 - dist / 5) * 0.06 + 0.015;
+        }
+        break;
+
+      case 'sphere':
+        for (let i = 0; i < count; i++) {
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          const r = 3.5 + (Math.random() - 0.5) * 0.5;
+          positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+          positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+          positions[i * 3 + 2] = r * Math.cos(phi);
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.05 + 0.02;
+        }
+        break;
+
+      case 'torus':
+        for (let i = 0; i < count; i++) {
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.random() * Math.PI * 2;
+          const R = 3;
+          const r = 0.8 + Math.random() * 0.5;
+          positions[i * 3] = (R + r * Math.cos(phi)) * Math.cos(theta);
+          positions[i * 3 + 1] = r * Math.sin(phi);
+          positions[i * 3 + 2] = (R + r * Math.cos(phi)) * Math.sin(theta);
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.05 + 0.015;
+        }
+        break;
+
+      case 'helix':
+        for (let i = 0; i < count; i++) {
+          const t = (Math.random() - 0.5) * 8;
+          const strand = Math.random() < 0.5 ? 0 : Math.PI;
+          const angle = t * 3 + strand;
+          const r = 1.5 + Math.random() * 0.4;
+          positions[i * 3] = Math.cos(angle) * r;
+          positions[i * 3 + 1] = t;
+          positions[i * 3 + 2] = Math.sin(angle) * r;
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.05 + 0.02;
+        }
+        break;
+
+      case 'vortex':
+        for (let i = 0; i < count; i++) {
+          const height = (Math.random() - 0.5) * 8;
+          const angle = height * 2 + Math.random() * 0.3;
+          const r = Math.abs(height) * 1.2 + Math.random() * 0.5;
+          positions[i * 3] = Math.cos(angle) * r;
+          positions[i * 3 + 1] = height;
+          positions[i * 3 + 2] = Math.sin(angle) * r;
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = (1 - Math.abs(height) / 4) * 0.06 + 0.01;
+        }
+        break;
+
+      case 'cube':
+        for (let i = 0; i < count; i++) {
+          const face = Math.floor(Math.random() * 6);
+          const u = (Math.random() - 0.5) * 5;
+          const v = (Math.random() - 0.5) * 5;
+          const jitter = (Math.random() - 0.5) * 0.3;
+          switch (face) {
+            case 0: positions[i * 3] = u; positions[i * 3 + 1] = v; positions[i * 3 + 2] = 2.5 + jitter; break;
+            case 1: positions[i * 3] = u; positions[i * 3 + 1] = v; positions[i * 3 + 2] = -2.5 + jitter; break;
+            case 2: positions[i * 3] = 2.5 + jitter; positions[i * 3 + 1] = u; positions[i * 3 + 2] = v; break;
+            case 3: positions[i * 3] = -2.5 + jitter; positions[i * 3 + 1] = u; positions[i * 3 + 2] = v; break;
+            case 4: positions[i * 3] = u; positions[i * 3 + 1] = 2.5 + jitter; positions[i * 3 + 2] = v; break;
+            case 5: positions[i * 3] = u; positions[i * 3 + 1] = -2.5 + jitter; positions[i * 3 + 2] = v; break;
+          }
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.05 + 0.02;
+        }
+        break;
+
+      case 'dna':
+        for (let i = 0; i < count; i++) {
+          const t = (Math.random() - 0.5) * 7;
+          const strand = Math.random() < 0.5 ? 0 : Math.PI;
+          const angle = t * 2.5 + strand;
+          const r = 1.2;
+          positions[i * 3] = Math.cos(angle) * r;
+          positions[i * 3 + 1] = t;
+          positions[i * 3 + 2] = Math.sin(angle) * r;
+          // Add rungs
+          if (Math.random() < 0.08) {
+            const t2 = t;
+            const a2 = t2 * 2.5;
+            const rung = Math.random();
+            positions[i * 3] = Math.cos(a2) * r * rung + Math.cos(a2 + Math.PI) * r * (1 - rung);
+            positions[i * 3 + 2] = Math.sin(a2) * r * rung + Math.sin(a2 + Math.PI) * r * (1 - rung);
+          }
+          colors[i * 3] = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
+          sizes[i] = Math.random() * 0.045 + 0.015;
+        }
+        break;
+    }
+    return { positions, colors, sizes };
+  }
+
+  function rebuildParticles() {
+    if (mainParticles) {
+      scene.remove(mainParticles);
+      if (mainParticles.geometry) mainParticles.geometry.dispose();
+      if (mainParticles.material) mainParticles.material.dispose();
+    }
+
+    const data = generatePresetPositions(currentPreset, particleCount);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(data.colors, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(data.sizes, 1));
+
+    const mat = new THREE.PointsMaterial({
+      size: 0.08,
+      map: glowTex,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.9,
+      color: baseColor,
+    });
+
+    mainParticles = new THREE.Points(geo, mat);
+    scene.add(mainParticles);
+  }
+
+  rebuildParticles();
+
+  // ============ Hand Tracking (MediaPipe Tasks Vision) ============
+  let handLandmarks = null;
+  let isHandDetected = false;
+
+  async function initMediaPipe() {
+    // Start camera
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+      videoEl.srcObject = stream;
+      await videoEl.play();
+      handStatus.textContent = '⏳ 加载手部模型...';
+    } catch (e) {
+      console.error('Camera error:', e);
+      handStatus.textContent = '📷 摄像头未授权 - 请允许摄像头权限后刷新页面';
+      return;
+    }
+
+    try {
+      // Import tasks-vision
+      const { HandLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
+
+      // Initialize WASM fileset
+      const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
+      );
+
+      const handLandmarker = await HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'GPU',
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+      });
+
+      handStatus.textContent = '✋ 等待手势...';
+      let lastVideoTime = -1;
+
+      // Process frames
+      async function processFrame() {
+        try {
+          if (videoEl.readyState >= 2 && videoEl.currentTime !== lastVideoTime) {
+            lastVideoTime = videoEl.currentTime;
+            const result = handLandmarker.detectForVideo(videoEl, performance.now());
+            if (result.landmarks && result.landmarks.length > 0) {
+              handLandmarks = result.landmarks[0];
+              isHandDetected = true;
+              handStatus.textContent = '✋ 手势已识别';
+              handStatus.classList.add('active');
+            } else {
+              isHandDetected = false;
+              handStatus.textContent = '✋ 等待手势...';
+              handStatus.classList.remove('active');
+            }
+          }
+        } catch (e) {
+          // Silently continue on frame errors
+        }
+        requestAnimationFrame(() => processFrame());
+      }
+      processFrame();
+    } catch (e) {
+      console.error('MediaPipe init error:', e);
+      handStatus.textContent = '⚠ 模型加载失败，请刷新重试';
+    }
+  }
+
+  initMediaPipe();
+
+  // ============ Hand Gesture Analysis ============
+  function getPalmOpenness(landmarks) {
+    if (!landmarks) return 0.5;
+    const palm = landmarks[0]; // wrist
+    const tips = [landmarks[8], landmarks[12], landmarks[16], landmarks[20]]; // fingertip indices
+    let avgDist = 0;
+    tips.forEach(tip => {
+      avgDist += Math.hypot(tip.x - palm.x, tip.y - palm.y, tip.z - palm.z);
+    });
+    return Math.max(0, Math.min(1, avgDist / 4 / 0.25));
+  }
+
+  function getHandCenter(landmarks) {
+    if (!landmarks) return { x: 0.5, y: 0.5 };
+    let cx = 0, cy = 0;
+    for (let i = 0; i < 21; i++) {
+      cx += landmarks[i].x;
+      cy += landmarks[i].y;
+    }
+    return { x: cx / 21, y: cy / 21 };
+  }
+
+  // ============ Animation Loop ============
+  const clock = new THREE.Clock();
+  let frameCount = 0;
+  let lastFpsTime = performance.now();
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const dt = Math.min(clock.getDelta(), 0.1);
+    frameCount++;
+
+    // FPS counter
+    if (performance.now() - lastFpsTime > 500) {
+      const fps = Math.round(frameCount / ((performance.now() - lastFpsTime) / 1000));
+      fpsCounter.textContent = `FPS: ${fps}`;
+      frameCount = 0;
+      lastFpsTime = performance.now();
+    }
+
+    // Parse hand data
+    if (isHandDetected && handLandmarks) {
+      const openness = getPalmOpenness(handLandmarks);
+      targetSpread = 0.3 + openness * 2.5;
+
+      const center = getHandCenter(handLandmarks);
+      targetRotationY = (center.x - 0.5) * Math.PI * 2;
+      targetRotationX = (center.y - 0.5) * Math.PI * 1.5;
+    } else {
+      // Auto-rotate when no hand detected
+      targetRotationY += dt * 0.3;
+      targetRotationX = Math.sin(performance.now() * 0.0005) * 0.4;
+      targetSpread += (1.0 - targetSpread) * dt * 0.5;
+    }
+
+    // Smooth interpolation
+    currentSpread += (targetSpread - currentSpread) * dt * 4;
+    currentRotationY += (targetRotationY - currentRotationY) * dt * 3;
+    currentRotationX += (targetRotationX - currentRotationX) * dt * 3;
+
+    // Rotate background stars slowly
+    bgStars.rotation.y += dt * 0.04;
+    bgStars.rotation.x += dt * 0.02;
+
+    // Update main particles
+    if (mainParticles) {
+      mainParticles.rotation.y = currentRotationY;
+      mainParticles.rotation.x = currentRotationX;
+      mainParticles.scale.setScalar(currentSpread);
+
+      // Color hue shift based on rotation
+      colorPhase += dt * 0.3;
+      const hueShift = ((currentRotationY + currentRotationX) / (Math.PI * 4) + colorPhase * 0.1) % 1;
+      const dynamicColor = baseColor.clone();
+      dynamicColor.offsetHSL(hueShift * 0.5, 0, 0);
+      mainParticles.material.color = dynamicColor;
+
+      // Also pulse opacities based on spread
+      const particles = mainParticles;
+    }
+
+    // Move background stars through deep space (z-drift illusion)
+    const bgPos = bgStars.geometry.attributes.position.array;
+    for (let i = 0; i < bgStarsCount; i++) {
+      bgPos[i * 3 + 2] += dt * 0.3;
+      if (bgPos[i * 3 + 2] > 50) {
+        bgPos[i * 3 + 2] = -80;
+      }
+    }
+    bgStars.geometry.attributes.position.needsUpdate = true;
+
+    composer.render();
+  }
+
+  animate();
+
+  // ============ UI Handlers ============
+  // Preset buttons
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPreset = btn.dataset.preset;
+      rebuildParticles();
+    });
+  });
+
+  // Color picker
+  colorPicker.addEventListener('input', (e) => {
+    baseColor = new THREE.Color(e.target.value);
+    if (mainParticles) {
+      mainParticles.material.color = baseColor;
+    }
+  });
+
+  // Density slider
+  densitySlider.addEventListener('input', (e) => {
+    particleCount = parseInt(e.target.value);
+    densityVal.textContent = particleCount;
+    rebuildParticles();
+  });
+
+  // Fullscreen
+  fsBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      fsBtn.textContent = '⛶';
+    } else {
+      document.body.requestFullscreen().catch(() => {});
+      fsBtn.textContent = '⛋';
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    fsBtn.textContent = document.fullscreenElement ? '⛋' : '⛶';
+  });
+
+  // Camera preview resize
+  const resizeHandle = document.getElementById('resizeHandle');
+  let isResizing = false;
+  resizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const w = Math.max(120, Math.min(400, e.clientX - previewBox.offsetLeft));
+    const h = w * 0.75;
+    previewBox.style.width = w + 'px';
+    previewBox.style.height = h + 'px';
+  });
+  window.addEventListener('mouseup', () => { isResizing = false; });
+
+  // Handle window resize
+  window.addEventListener('resize', () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+  </script>
+</body>
+</html>
